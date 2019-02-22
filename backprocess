@@ -1,36 +1,7 @@
-#import time
-#import threading
-
-
-#class TestThreading(object):
-#    def __init__(self, interval=1):
-#        self.interval = interval
-#
-#       thread = threading.Thread(target=self.run, args=())
-#        thread.daemon = True
-#        thread.start()
-
-#    def run(self):
-#        while True :
-#            print(' : Start now')
-#            print(' : Start now1')
-#            print(' : Start now2')
-#            print(' : Start now3')
-#            print(' : Start now4')
-
-#            time.sleep(self.interval)
-
-
-#tr = TestThreading()
-#time.sleep(1)
-#print('a')
-#i = 1
-#while True:
-#    time.sleep(1)
 
 
 def main():
     while True:
-        i = 1
+
 
 main()
