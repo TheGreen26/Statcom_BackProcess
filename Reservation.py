@@ -1,6 +1,4 @@
-import os
-import json
-from pathlib import Path
+
 
 import time, sched
 
@@ -25,9 +23,5 @@ class Reservation:
     def print_function(a='default'):
         print("From print_function", time.time(), a)
 
-    def schedule_pass(self):
-        s = sched.scheduler(time.time)
-        s.enterabs(self.setUpTime, 1, Reservation.print_function('Call Motor set up time'))
-        s.enterabs(self.reservationTime, 1, Reservation.print_function('Call track Satellite time'))
-        # TODO: replace print with the real function
+
 
