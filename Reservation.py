@@ -10,7 +10,7 @@ class Reservation:
 
         self.satellite = satellite
         self.reservationTime = reservationTime
-        self.setUpTime = int(timeUTC)  - 2*60
+        self.setUpTime =  int(timeUTC)  - 2*60
         self.client=client
         self.length=length
         self.data = data
