@@ -1,6 +1,6 @@
 
 
-import time, sched
+import time
 
 class Reservation:
 
@@ -15,7 +15,7 @@ class Reservation:
         self.length=length
         self.data = data
         self.frequencies=frequencies
-        self.timeUTC=timeUTC
+        self.timeUTC=int(timeUTC)
 
 
 
