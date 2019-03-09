@@ -71,23 +71,23 @@ class ReservationChecker(threading.Thread):
     def update(self):
         ## cancel the previous calendar
 
-        reservationDB = open("/home/statcom/PycharmProjects/statcom-v1/reservationDB.json")
+        reservationDB = open("/home/statcom/Documents/statcom-v1/reservationDB.json")
 
         resJson = json.load(reservationDB)
-        print(len(resJson))
-        i=0
+
+
         if not len(resJson)==0:
             for element in resJson:
                 temp=Reservation.Reservation(satellite=element['satellite'],reservationTime=element['reservationTime'],
                                              client=element['client'], length=element['length'], data=element['command file'],
-                                             frequencies=[element['Uplink'],element['Downlink']],timeUTC=time.time()+6)#todo changer
+                                             frequencies=[element['Uplink'],element['Downlink']],timeUTC=element['Time UTC'])
                 self.reservationList.append(temp)
                 self.reservationNumber=self.reservationNumber+1
 
-                i=i+1
+
             reservationDB.close()
             self.schedule_pass()
-            stat = os.stat("/home/statcom/PycharmProjects/statcom-v1/reservationDB.json")
+            stat = os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
             self.modificationDate = stat.st_mtime
             self.calendar.run()
 
@@ -103,8 +103,11 @@ class ReservationChecker(threading.Thread):
 
         for res in self.reservationList:
 
-            self.events.append(self.calendar.enterabs(res.setUpTime, 1, self.yaesus.init, (res.satellite,)))
-            self.events.append(self.calendar.enterabs(res.timeUTC, 1, self.communicate, (res,)))
+            if res.timeUTC < int(time.time()):
+                res.eraseInDB()
+            else:
+                self.events.append(self.calendar.enterabs(res.setUpTime, 1, self.yaesus.init, (res.satellite,)))
+                self.events.append(self.calendar.enterabs(res.timeUTC, 1, self.communicate, (res,)))
         # TODO: replace print with the real function
 
     '''
@@ -124,8 +127,6 @@ class ReservationChecker(threading.Thread):
         self.yaesus.tracking()
 
 
-
-
     '''
            ---------------------------------------------------------
            description: verify is the file has changed
@@ -136,7 +137,7 @@ class ReservationChecker(threading.Thread):
            '''
     def fileChanged(self):
 
-        stat=os.stat("/home/statcom/PycharmProjects/statcom-v1/reservationDB.json")
+        stat=os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
         if(self.modificationDate == stat.st_mtime):
 
             return False
@@ -165,20 +166,22 @@ class ReservationChecker(threading.Thread):
             except:
                 print("already happended")
         self.reservationNumber=0
-        self.reservationList.clear()
-        self.events.clear()
+        self.reservationList=[]
+        self.events=[]
         self.stop_event.set()
+
+
 
 def main( top_block_cls=limesdr_receive_WB.limesdr_receive_WB):
     checker= ReservationChecker()
     checker.start() #starts the checker thread
-    stat = os.stat("/home/statcom/PycharmProjects/statcom-v1/reservationDB.json")
+    stat = os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
     #SDR_handler=top_block_cls(1e09,'',0)
     #SDR_handler= limesdr_receive_WB.limesdr_receive_WB(1e09,'',0)
     checker.modificationDate = stat.st_mtime
     time.sleep(2)
     sdr=doppler_handler()
-
+    sdr.start()
 
     while (True):
 
@@ -188,8 +191,7 @@ def main( top_block_cls=limesdr_receive_WB.limesdr_receive_WB):
         if checker.isCommunicating:
 
             sdr.currentReservation=checker.pendingReservation
-            sdr.start()
-            sdr.join()
+            sdr.isTracking = True
             #cmd = ['python', 'limesdr_receive_WB.py', checker.pendingReservation.satellite, str(checker.pendingReservation.frequencies[1]), str(checker.pendingReservation.length),'&']
             #output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()
         #    SDR_handler.sat_name=checker.pendingReservation.satellite
@@ -197,13 +199,24 @@ def main( top_block_cls=limesdr_receive_WB.limesdr_receive_WB):
           #  SDR_handler.duration=checker.pendingReservation.length*1000
             #SDR_handler.Start()
             #SDR_handler.Wait()
+        else:
+            sdr.isRunning=False
 
 class doppler_handler(threading.Thread):
 
     def __init__(self):
         threading.Thread.__init__(self)
         self.currentReservation=Reservation.Reservation('', '',0,'','',0,[])
+        self.isTracking=False
+        self.isRunning=False
+
     def run(self):
+        while True:
+            time.sleep(0.01)
+            if self.isTracking and not self.isRunning:
+                self.isRunning=True
+                self.track()
+    def track(self):
         cmd = ['python', 'limesdr_receive_WB.py', self.currentReservation.satellite,
                str(self.currentReservation.frequencies[1]), str(self.currentReservation.length), ' &']
         output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()
