@@ -1,10 +1,14 @@
-from pathlib import Path
+
 import Reservation
+import motor
+import subprocess
 import json
 import time
 import threading
 import sched
 import os
+import limesdr_receive_WB
+import wx
 
 
 
@@ -19,13 +23,21 @@ class ReservationChecker(threading.Thread):
       '''
     def __init__(self):
 
+        super(ReservationChecker, self).__init__()
         self.reservationList=[]
         self.events=[]
         self.reservationNumber=0
-        self.calendar = sched.scheduler(time.time)
+        self.stop_event = threading.Event()
+        self.calendar = sched.scheduler(time.time, delayfunc=self.stop_event.wait)
         self.checkerThread=threading.Thread(target=self.calendar.run)
         self.modificationDate=0
+        super(ReservationChecker, self).__init__()
+        self.yaesus = motor.Motor(4533)
+        self.isCommunicating = False
+        self.pendingReservation=0
+
         threading.Thread.__init__(self)
+
 
     '''
       ---------------------------------------------------------
@@ -37,18 +49,15 @@ class ReservationChecker(threading.Thread):
       '''
     def run(self):
 
-        while (True):
+        self.update()
 
-            if self.fileChanged(): #verify if there was a modification in the database
-                time.sleep(1)
-                stat = os.stat("/home/simon/PycharmProjects/statcom-v1/statcom-v1/reservationDB.json")
-                self.modificationDate = stat.st_mtime
+
+        while (True):
+            if (self.fileChanged()):
+                time.sleep(0.1)
+
                 self.update()
                 print('checker updated')
-
-
-
-
 
     '''
    ---------------------------------------------------------
@@ -62,21 +71,25 @@ class ReservationChecker(threading.Thread):
     def update(self):
         ## cancel the previous calendar
 
-        reservationDB = open("/home/simon/PycharmProjects/statcom-v1/statcom-v1/reservationDB.json")
+        reservationDB = open("/home/statcom/Documents/statcom-v1/reservationDB.json")
 
         resJson = json.load(reservationDB)
-        print(len(resJson))
-        i=0
-        for element in resJson:
-            temp=Reservation.Reservation(satellite=element['satellite'],reservationTime=element['reservationTime'],
-                                         client=element['client'], length=element['length'], data=element['command file'],
-                                         frequencies=[element['Uplink'],element['Downlink']],timeUTC=element['Time UTC'])
-            self.reservationList.append(temp)
-            self.reservationNumber=self.reservationNumber+1
-            i=i+1
-        reservationDB.close()
-        self.schedule_pass()
-        self.calendar.run(blocking=False)
+
+
+        if not len(resJson)==0:
+            for element in resJson:
+                temp=Reservation.Reservation(satellite=element['satellite'],reservationTime=element['reservationTime'],
+                                             client=element['client'], length=element['length'], data=element['command file'],
+                                             frequencies=[element['Uplink'],element['Downlink']],timeUTC=element['Time UTC'])
+                self.reservationList.append(temp)
+                self.reservationNumber=self.reservationNumber+1
+
+
+            reservationDB.close()
+            self.schedule_pass()
+            stat = os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
+            self.modificationDate = stat.st_mtime
+            self.calendar.run()
 
     '''
        ---------------------------------------------------------
@@ -90,12 +103,29 @@ class ReservationChecker(threading.Thread):
 
         for res in self.reservationList:
 
-            self.events.append(self.calendar.enterabs(res.setUpTime, 1,self.print_event,('prepare the motor',)))
-            self.events.append(self.calendar.enterabs(res.timeUTC, 1, self.print_event,('start the engine',)))
+            if res.timeUTC < int(time.time()):
+                res.eraseInDB()
+            else:
+                self.events.append(self.calendar.enterabs(res.setUpTime, 1, self.yaesus.init, (res.satellite,)))
+                self.events.append(self.calendar.enterabs(res.timeUTC, 1, self.communicate, (res,)))
         # TODO: replace print with the real function
 
-    def print_event(self, callType):
-        print(str(callType)+str(time.time()))
+    '''
+          ---------------------------------------------------------
+          description: setting up the antenna to the start of the passe
+
+          create by: Simon Belanger
+          Last mmodified by : Simon Belanger @2019-03-04
+          ---------------------------------------------------------
+          '''
+
+    def communicate(self, reservation):
+
+        self.pendingReservation=reservation
+
+        self.isCommunicating=True
+        self.yaesus.tracking()
+
 
     '''
            ---------------------------------------------------------
@@ -107,7 +137,7 @@ class ReservationChecker(threading.Thread):
            '''
     def fileChanged(self):
 
-        stat=os.stat("/home/simon/PycharmProjects/statcom-v1/statcom-v1/reservationDB.json")
+        stat=os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
         if(self.modificationDate == stat.st_mtime):
 
             return False
@@ -136,22 +166,60 @@ class ReservationChecker(threading.Thread):
             except:
                 print("already happended")
         self.reservationNumber=0
-        self.reservationList.clear()
-        self.events.clear()
+        self.reservationList=[]
+        self.events=[]
+        self.stop_event.set()
 
-def main():
+
+
+def main( top_block_cls=limesdr_receive_WB.limesdr_receive_WB):
     checker= ReservationChecker()
     checker.start() #starts the checker thread
+    stat = os.stat("/home/statcom/Documents/statcom-v1/reservationDB.json")
+    #SDR_handler=top_block_cls(1e09,'',0)
+    #SDR_handler= limesdr_receive_WB.limesdr_receive_WB(1e09,'',0)
+    checker.modificationDate = stat.st_mtime
     time.sleep(2)
+    sdr=doppler_handler()
+    sdr.start()
+
     while (True):
-        time.sleep(2)
-        print(time.time())
-        print(' number '+str(checker.reservationNumber)+'\n')
+
         if checker.fileChanged():
             checker.stopCalendar()
 
+        if checker.isCommunicating:
 
+            sdr.currentReservation=checker.pendingReservation
+            sdr.isTracking = True
+            #cmd = ['python', 'limesdr_receive_WB.py', checker.pendingReservation.satellite, str(checker.pendingReservation.frequencies[1]), str(checker.pendingReservation.length),'&']
+            #output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()
+        #    SDR_handler.sat_name=checker.pendingReservation.satellite
+         #   SDR_handler.freq_RX=checker.pendingReservation.frequencies[1]
+          #  SDR_handler.duration=checker.pendingReservation.length*1000
+            #SDR_handler.Start()
+            #SDR_handler.Wait()
+        else:
+            sdr.isRunning=False
 
+class doppler_handler(threading.Thread):
+
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.currentReservation=Reservation.Reservation('', '',0,'','',0,[])
+        self.isTracking=False
+        self.isRunning=False
+
+    def run(self):
+        while True:
+            time.sleep(0.01)
+            if self.isTracking and not self.isRunning:
+                self.isRunning=True
+                self.track()
+    def track(self):
+        cmd = ['python', 'limesdr_receive_WB.py', self.currentReservation.satellite,
+               str(self.currentReservation.frequencies[1]), str(self.currentReservation.length), ' &']
+        output = subprocess.Popen(cmd, stdout=subprocess.PIPE).communicate()
 
 
 main()
